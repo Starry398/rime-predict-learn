@@ -1,0 +1,82 @@
+name: build-predict-db
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_docs:
+        description: '处理多少篇文档'
+        default: '80000'
+      top_prev:
+        description: '保留多少个上文 key'
+        default: '20000'
+      per_key:
+        description: '每个上文最多保留几条接续'
+        default: '8'
+      min_pair:
+        description: '词对最小出现次数'
+        default: '3'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake \
+            libboost-dev libboost-system-dev libboost-filesystem-dev \
+            libboost-regex-dev libboost-algorithm-dev \
+            libleveldb-dev libmarisa-dev libopencc-dev libyaml-cpp-dev \
+            libglog-dev libgflags-dev
+
+      - name: Build librime + build_predict
+        run: |
+          git clone --depth 1 https://github.com/rime/librime.git
+          cd librime
+          git clone --depth 1 https://github.com/rime/librime-predict.git plugins/predict
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_MERGED_PLUGINS=ON \
+            -DBUILD_TEST=OFF
+          cmake --build build --target build_predict -j$(nproc)
+          ls -lh build/bin/
+
+      - name: Generate pairs
+        run: |
+          pip install --no-cache-dir jieba datasets
+          python scripts/build_learn_data.py \
+            --max-docs ${{ inputs.max_docs }} \
+            --top-prev ${{ inputs.top_prev }} \
+            --per-key ${{ inputs.per_key }} \
+            --min-pair ${{ inputs.min_pair }} \
+            --out out/liu_user_predict.txt
+
+      - name: Convert and build db
+        run: |
+          python scripts/tsv_to_predict_input.py out/liu_user_predict.txt
+          wc -l out/predict_input.txt
+          ./librime/build/bin/build_predict out/predict.db < out/predict_input.txt
+          ls -lh out/predict.db
+
+      - name: Verify
+        run: |
+          file out/predict.db
+          head -c 64 out/predict.db | xxd | head -4
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: predict-db
+          path: out/predict.db
+          retention-days: 30
