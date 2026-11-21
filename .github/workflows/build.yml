@@ -1,0 +1,54 @@
+name: build-learn-data
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_docs:
+        description: '处理多少篇文档'
+        default: '80000'
+      top_prev:
+        description: '保留多少个上文 key'
+        default: '15000'
+      per_key:
+        description: '每个上文最多保留几条接续'
+        default: '8'
+      min_pair:
+        description: '词对最小出现次数'
+        default: '3'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install --no-cache-dir jieba datasets
+
+      - name: Build learn data
+        run: |
+          python scripts/build_learn_data.py \
+            --max-docs ${{ inputs.max_docs }} \
+            --top-prev ${{ inputs.top_prev }} \
+            --per-key ${{ inputs.per_key }} \
+            --min-pair ${{ inputs.min_pair }}
+
+      - name: Stats
+        run: |
+          ls -lh out/
+          wc -l out/liu_user_predict.txt
+          head -5 out/liu_user_predict.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: liu-user-predict-txt
+          path: out/liu_user_predict.txt
+          retention-days: 30
